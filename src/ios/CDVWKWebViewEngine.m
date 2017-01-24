@@ -236,6 +236,17 @@ static void * KVOContext = &KVOContext;
     }
 }
 
+- (UIColor*)colorFromHexString:(NSString*)colorString {
+    unsigned hexValue = 0;
+    NSScanner *scanner = [NSScanner scannerWithString:colorString];
+    [scanner setScanLocation:1];
+    [scanner scanHexInt:&hexValue];
+    return [UIColor colorWithRed:((hexValue & 0xFF0000) >> 16) / 255.0
+                           green:((hexValue & 0xFF00) >> 8) / 255.0
+                            blue:( hexValue & 0xFF ) / 255.0
+                           alpha:1.0];
+}
+
 - (void)updateSettings:(NSDictionary*)settings
 {
     WKWebView* wkWebView = (WKWebView*)_engineWebView;
@@ -246,6 +257,47 @@ static void * KVOContext = &KVOContext;
      wkWebView.configuration.preferences.javaScriptEnabled = [settings cordovaBoolSettingForKey:@"JavaScriptEnabled" default:YES];
      wkWebView.configuration.preferences.javaScriptCanOpenWindowsAutomatically = [settings cordovaBoolSettingForKey:@"JavaScriptCanOpenWindowsAutomatically" default:NO];
      */
+
+    BOOL pullToRefresh = [settings cordovaBoolSettingForKey:@"WKWebViewPullToRefresh" defaultValue:NO];
+    NSString *refreshControlTintColor = [settings cordovaSettingForKey:@"RefreshControlTint"];
+    NSString *refreshControlBackgroundColor = [settings cordovaSettingForKey:@"RefreshControlBackground"];
+
+
+    if (pullToRefresh) {
+        UIRefreshControl *refreshControl = [[UIRefreshControl alloc] init];
+        [refreshControl addTarget:self action:@selector(reloadWebView:) forControlEvents:UIControlEventValueChanged];
+        [wkWebView.scrollView addSubview:refreshControl];
+
+        if (refreshControlBackgroundColor) {
+            refreshControl.backgroundColor = [self colorFromHexString:refreshControlBackgroundColor];
+        }
+        if (refreshControlTintColor) {
+            refreshControl.tintColor = [self colorFromHexString:refreshControlTintColor];
+        }
+    }
+
+    /* DYRT
+     * Swizzle _startAssistingNode to make it seem like the user is interacting.
+     * This replicates the behavior of UIWebView's keyboardDisplayRequiresUserAction property.
+     *
+     * See:
+     * - https://issues.apache.org/jira/browse/CB-10376
+     * - https://bugs.webkit.org/show_bug.cgi?id=142757#c3
+     * - https://github.com/Telerik-Verified-Plugins/WKWebView/issues/184
+     * - https://github.com/YetiCGN/cordova-plugin-wkwebview-engine/commit/eb485aaa237ce3c5ea123e8350115948608701a5
+     */
+    BOOL keyboardDisplayRequiresUserAction = [settings cordovaBoolSettingForKey:@"KeyboardDisplayRequiresUserAction" defaultValue:YES];
+
+    if (!keyboardDisplayRequiresUserAction) {
+        SEL sel = sel_getUid("_startAssistingNode:userIsInteracting:blurPreviousNode:userObject:");
+        Class WKContentView = NSClassFromString(@"WKContentView");
+        Method method = class_getInstanceMethod(WKContentView, sel);
+        IMP originalImp = method_getImplementation(method);
+        IMP imp = imp_implementationWithBlock(^void(id me, void* arg0, BOOL arg1, BOOL arg2, id arg3) {
+            ((void (*)(id, SEL, void*, BOOL, BOOL, id))originalImp)(me, sel, arg0, TRUE, arg2, arg3);
+        });
+        method_setImplementation(method, imp);
+    }
 
     // By default, DisallowOverscroll is false (thus bounce is allowed)
     BOOL bounceAllowed = !([settings cordovaBoolSettingForKey:@"DisallowOverscroll" defaultValue:NO]);
@@ -309,6 +361,12 @@ static void * KVOContext = &KVOContext;
     if (settings && [settings isKindOfClass:[NSDictionary class]]) {
         [self updateSettings:settings];
     }
+}
+
+- (void)reloadWebView:(UIRefreshControl*)sender {
+    WKWebView* wkWebView = (WKWebView*)_engineWebView;
+    [wkWebView reload];
+    [sender endRefreshing];
 }
 
 // This forwards the methods that are in the header that are not implemented here.
