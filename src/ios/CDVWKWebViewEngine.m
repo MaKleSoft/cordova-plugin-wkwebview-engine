@@ -235,6 +235,17 @@ static void * KVOContext = &KVOContext;
     }
 }
 
+- (UIColor*)colorFromHexString:(NSString*)colorString {
+    unsigned hexValue = 0;
+    NSScanner *scanner = [NSScanner scannerWithString:colorString];
+    [scanner setScanLocation:1];
+    [scanner scanHexInt:&hexValue];
+    return [UIColor colorWithRed:((hexValue & 0xFF0000) >> 16) / 255.0
+                           green:((hexValue & 0xFF00) >> 8) / 255.0
+                            blue:( hexValue & 0xFF ) / 255.0
+                           alpha:1.0];
+}
+
 - (void)updateSettings:(NSDictionary*)settings
 {
     WKWebView* wkWebView = (WKWebView*)_engineWebView;
@@ -246,6 +257,23 @@ static void * KVOContext = &KVOContext;
      wkWebView.configuration.preferences.javaScriptCanOpenWindowsAutomatically = [settings cordovaBoolSettingForKey:@"JavaScriptCanOpenWindowsAutomatically" default:NO];
      */
 
+    BOOL pullToRefresh = [settings cordovaBoolSettingForKey:@"WKWebViewPullToRefresh" defaultValue:NO];
+    NSString *refreshControlTintColor = [settings cordovaSettingForKey:@"RefreshControlTint"];
+    NSString *refreshControlBackgroundColor = [settings cordovaSettingForKey:@"RefreshControlBackground"];
+
+
+    if (pullToRefresh) {
+        UIRefreshControl *refreshControl = [[UIRefreshControl alloc] init];
+        [refreshControl addTarget:self action:@selector(reloadWebView:) forControlEvents:UIControlEventValueChanged];
+        [wkWebView.scrollView addSubview:refreshControl];
+
+        if (refreshControlBackgroundColor) {
+            refreshControl.backgroundColor = [self colorFromHexString:refreshControlBackgroundColor];
+        }
+        if (refreshControlTintColor) {
+            refreshControl.tintColor = [self colorFromHexString:refreshControlTintColor];
+        }
+    }
     // By default, DisallowOverscroll is false (thus bounce is allowed)
     BOOL bounceAllowed = !([settings cordovaBoolSettingForKey:@"DisallowOverscroll" defaultValue:NO]);
 
